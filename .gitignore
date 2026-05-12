@@ -1,36 +1,14 @@
-# Obsidian binary and extracted contents - downloaded on demand by setup script
-.cache/
-Obsidian.AppImage
-obsidian.asar
-obsidian.asar.gz
-squashfs-root/
-extracted/
-
-# Obsidian's own files - extracted from the AppImage at setup time, not source
-obsidian/
-obsidian.tmp-*/
-obsidian.prev-*/
-
-# Obsidian mobile bundle - extracted from the Android APK by update-obsidian-mobile.js
-obsidian-mobile/
+# Vendor — extracted Obsidian bundles (regeneratable via scripts/update-obsidian.js)
+vendor/
 
 # Node
 node_modules/
 npm-debug.log*
 
-# Vault registry - contains local absolute paths, not portable
-data/
-
-# Test/dev artifacts
-test-vault/.obsidian/
-test-boot.py
-*.log
-
 # Internal development docs (contain personal infra references)
 docs/
 
-# Temporary build/debug artifacts
-.tmp/
+# Tool-managed worktree state
 .codenomad/
 
 # Editor / OS
@@ -38,3 +16,4 @@ docs/
 .idea/
 .vscode/
 *.swp
+*.log

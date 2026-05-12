@@ -107,9 +107,12 @@ picks them up.
 `statSync` ו-`readFileSync` מפעילים את הדגל. הרעש מקוד שלנו נעלם; ה-browser XHR
 log עדיין מופיע (לא ניתן לדכא) אבל רק בDevTools.
 
-#### D. crypto fully stubbed
-We only implement randomBytes. createHash returns empty buffers. If any
-plugin or core feature uses crypto seriously, it will break.
+#### ~~D. crypto fully stubbed~~ ✅ נפתר 2026-05-11
+`crypto.randomBytes` ו-`createHash` מיושמים. ה-async path של `createHash`
+עובד דרך `crypto.subtle.digest` (SHA-1/256/512). MD5 ממופה ל-SHA-256
+(WebCrypto לא תומך MD5 — plugins שצריכים MD5 חייבים לבנדל בעצמם, וזה
+מה ש-LiveSync עושה עם `spark-md5`). ה-sync path מחזיר ריק עם warning —
+אם plugin עתידי באמת ידרוש sync, נחזור לשיקול.
 
 See `docs/investigations.md` for solved issues and debugging notes.
 
@@ -281,6 +284,32 @@ read should be in `server/config.js` for consistency with other settings.
 - [ ] Install LiveSync into `test-vault/.obsidian/plugins/obsidian-livesync/` (manual; will graduate to system plugin once stable).
 - [ ] Verify initial replication with a small CouchDB on Fly.io or local.
 - [ ] Document CORS config in `docs/livesync.md` when the integration ships.
+
+Detailed agent-executable plan: `docs/plans/livesync-implementation.md`.
+
+### Phase 2 (planned, after LiveSync ships): per-vault storage type — "local vaults"
+
+Once LiveSync is operational on server-backed vaults, we plan to add a
+second vault type: **local vaults**. These live in browser OPFS (Origin
+Private File System) instead of the server filesystem, and sync between
+devices exclusively through LiveSync ↔ CouchDB.
+
+| | Server vault (current) | Local vault (planned) |
+|---|---|---|
+| Storage | Server filesystem (`/api/fs/*`) | Browser OPFS |
+| Cross-device sync | Each device opens obsidian-web | Mandatory LiveSync ↔ CouchDB |
+| Cross-tab sync (same browser) | chokidar → WebSocket | BroadcastChannel (v1: single-tab only) |
+| Backup | Server disk | CouchDB (and OPFS replicas on other devices) |
+| Privacy | Files on our server | Files only in browser + user's CouchDB |
+| Available on | `/` and `/mobile` | `/mobile` only |
+
+The two types coexist on the same deployment. Starter page lets the
+user pick which kind to create. No migration of existing server vaults
+required.
+
+- Detailed agent-executable plan: `docs/plans/local-vaults-implementation.md`
+- Design rationale (incl. the rejected "pure client-only" pivot):
+  `docs/plans/future-direction-client-only.md`
 
 ---
 

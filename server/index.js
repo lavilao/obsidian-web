@@ -51,14 +51,14 @@ function createApp(appConfig = config) {
 
   // Inject ?v=<cacheBust> into all client script/link tags so browsers pick up
   // changes automatically. The bust value is recomputed at server startup from
-  // client/ file mtimes — no manual ?v=N bump needed.
+  // client/ and client-mobile/ file mtimes — no manual ?v=N bump needed.
   const cacheBust = appConfig.clientCacheBust || 'dev';
   async function sendHtmlWithCacheBust(res, filePath) {
     try {
       let html = await fsp.readFile(filePath, 'utf8');
-      // Inject (or replace) ?v=<bust> on all /client/ script and link tags.
+      // Inject (or replace) ?v=<bust> on all /client/ and /client-mobile/ script and link tags.
       // Handles both: existing ?v=3 and paths without any query string.
-      html = html.replace(/((?:src|href)="\/client\/[^"]*?)(\?v=[^"&]*)?"(?=[^>]*>)/g,
+      html = html.replace(/((?:src|href)="\/client(?:-mobile)?\/[^"]*?)(\?v=[^"&]*)?"(?=[^>]*>)/g,
         (_, prefix) => `${prefix}?v=${cacheBust}"`);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
@@ -79,8 +79,7 @@ function createApp(appConfig = config) {
 
   // Mobile client entry point.
   app.get('/mobile', (req, res) => {
-    res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(path.join(appConfig.projectRoot, 'client-mobile', 'index.html'));
+    sendHtmlWithCacheBust(res, path.join(appConfig.projectRoot, 'client-mobile', 'index.html'));
   });
 
   // Static files - order matters: client/ first, then obsidian/.

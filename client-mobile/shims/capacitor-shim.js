@@ -345,27 +345,39 @@
     async watchAndStatAll(opts) {
       // Custom Obsidian API: returns full file tree snapshot + activates watcher.
       // We use our bootstrap endpoint which already has the full tree.
+      //
+      // IMPORTANT: the CapacitorAdapter processes the result by calling
+      //   for (const i of e.children) this.quickList("", i);
+      // quickList("", entry) uses entry.name as the FULL relative path.
+      // It does NOT recurse into entry.children — so a nested tree structure
+      // would only populate the root level.
+      //
+      // Fix: return a FLAT list where every entry's `name` is its full
+      // relative path (e.g. "10. פרויקטים/myfile.md"). The adapter's
+      // quickList will then correctly add every file to its files map.
       await Filesystem.startWatch(opts);
       const vaultId = getVaultId();
       const res = await fetch('/api/bootstrap?vault=' + encodeURIComponent(vaultId) + '&full=1',
         { headers: { 'Accept-Encoding': 'br, gzip' } });
       if (!res.ok) throw capError('EIO', 'watchAndStatAll failed');
       const data = await res.json();
-      // Convert bootstrap dirs/fs format to Capacitor's expected { children: [...] }
-      const children = [];
       const dirs = data.dirs || {};
-      const fsCache = data.fs || {};
-      const rootEntries = dirs[''] || [];
-      for (const e of rootEntries) {
-        children.push({
-          name: e.name,
-          type: e.isDirectory ? 'directory' : 'file',
-          size: e.size || 0,
-          mtime: e.mtime || 0,
-          uri: '',
-          ctime: e.mtime || 0,
-          children: e.isDirectory ? [] : undefined,
-        });
+
+      // Flatten the entire dirs map into a single children array.
+      // Each entry's name = its full relative vault path.
+      const children = [];
+      for (const dirPath of Object.keys(dirs)) {
+        for (const e of dirs[dirPath]) {
+          const relPath = dirPath ? dirPath + '/' + e.name : e.name;
+          children.push({
+            name: relPath,
+            type: e.isDirectory ? 'directory' : 'file',
+            size: e.size || 0,
+            mtime: e.mtime || 0,
+            uri: '',
+            ctime: e.mtime || 0,
+          });
+        }
       }
       return { children };
     },

@@ -56,6 +56,7 @@ function computeClientCacheBust(clientPath) {
 }
 
 const CLIENT_PATH = path.resolve(PROJECT_ROOT, 'client');
+const CLIENT_MOBILE_PATH = path.resolve(PROJECT_ROOT, 'client-mobile');
 
 module.exports = {
   port: parsePort(process.env.PORT),
@@ -64,13 +65,14 @@ module.exports = {
   registryPath: path.resolve(PROJECT_ROOT, process.env.VAULT_REGISTRY || 'data/vaults.json'),
   obsidianPath: path.resolve(PROJECT_ROOT, 'obsidian'),
   clientPath: CLIENT_PATH,
+  clientMobilePath: CLIENT_MOBILE_PATH,
   projectRoot: PROJECT_ROOT,
   appVersion: APP_VERSION,
   vaultBase: VAULT_BASE,
-  // Computed once at startup from client/ file mtimes. Used by index.html and
-  // starter.html template rendering to inject ?v=<bust> on all client scripts,
-  // replacing the old manual ?v=N bump.
-  clientCacheBust: computeClientCacheBust(CLIENT_PATH),
+  // Computed once at startup from client/ + client-mobile/ file mtimes.
+  // Used by index.html, starter.html and client-mobile/index.html to inject
+  // ?v=<bust> on all client scripts — no manual ?v=N bump needed.
+  clientCacheBust: computeClientCacheBust(CLIENT_PATH) + computeClientCacheBust(CLIENT_MOBILE_PATH),
   // Set WATCH_POLLING=true when the vault lives on a filesystem that does not
   // support inotify (rclone/FUSE, NFS, SMB, …).  Without polling chokidar
   // will never fire any events on those mounts.

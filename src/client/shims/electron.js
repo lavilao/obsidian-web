@@ -464,10 +464,23 @@
     getCurrentWindow: makeWindow,
     getCurrentWebContents: () => webContentsInstance,
     BrowserWindow: function () { return makeWindow(); },
-    clipboard: {
-      writeText: (text) => navigator.clipboard.writeText(text),
-      readText: () => navigator.clipboard.readText(),
-    },
+    clipboard: (function () {
+      // Capture the NATIVE clipboard methods now, at shim-load time (this
+      // runs before Obsidian's app.js boots). Obsidian later monkey-patches
+      // navigator.clipboard.writeText to delegate back to
+      // electron.clipboard.writeText — if we resolved navigator.clipboard
+      // lazily we'd call that patched version, which calls us, looping until
+      // "RangeError: Maximum call stack size exceeded". See issue #8.
+      const native = (typeof navigator !== 'undefined' && navigator.clipboard) || null;
+      const nativeWrite = native && native.writeText ? native.writeText.bind(native) : null;
+      const nativeRead = native && native.readText ? native.readText.bind(native) : null;
+      return {
+        writeText: (text) => nativeWrite
+          ? nativeWrite(text)
+          : Promise.reject(new Error('[obsidian-web] clipboard.writeText unavailable')),
+        readText: () => nativeRead ? nativeRead() : Promise.resolve(''),
+      };
+    })(),
   };
   remote.BrowserWindow.getFocusedWindow = () => makeWindow();
   remote.BrowserWindow.getAllWindows = () => [makeWindow()];

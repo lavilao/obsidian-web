@@ -15,9 +15,9 @@ const path = require('path');
 const {
   tryGetSystemFilePath,
   getSystemPluginIds,
+  getSystemPluginDir,
   mergeCommunityList,
   stripCommunityList,
-  SYSTEM_PLUGINS_DIR,
 } = require('../system-plugins');
 
 // Imported lazily to avoid circular require — bootstrap.js exports serverCache.
@@ -250,7 +250,7 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
       if (inSysDir) {
         const vaultEntries = await safeReaddir(target);
         if (vaultEntries.length === 0) {
-          const repoDir = path.join(SYSTEM_PLUGINS_DIR, inSysDirMatch[1]);
+          const repoDir = getSystemPluginDir(inSysDirMatch[1]);
           const entries = await fsp.readdir(repoDir, { withFileTypes: true });
           const result = await Promise.all(entries.map(async (entry) => {
             const child = path.join(repoDir, entry.name);

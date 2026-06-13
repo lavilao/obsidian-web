@@ -1,41 +1,49 @@
 /**
  * System plugin overlay.
  *
- * This module scans <repo>/plugins/ at startup and tracks plugin ids
- * whose source lives in the repo (not in any user's vault). The HTTP
- * FS API (server/api/fs.js) consults these helpers to overlay system
- * plugin files on top of the vault's filesystem:
+ * This module scans two directories at startup and tracks plugin ids
+ * whose source lives in the repo or in vendor/plugins (downloaded
+ * third-party plugins).  The HTTP FS API (server/api/fs.js) consults
+ * these helpers to overlay system plugin files on top of the vault's
+ * filesystem:
  *
  *   - Reads/stats for .obsidian/plugins/<id>/<file> fall back to the
- *     repo copy when the vault doesn't have it.
+ *     correct directory copy when the vault doesn't have it.
  *   - Reads of .obsidian/community-plugins.json have system ids merged
  *     in, so Obsidian sees them as enabled.
  *   - Writes of .obsidian/community-plugins.json have system ids
  *     stripped, so we don't pollute the user's vault.
  *
- * Result: a user can open any vault and the layout-switcher plugin
- * (and any future system plugin) appears automatically — without us
- * ever touching files inside the vault directory.
+ * Precedence: src/plugins/ wins over vendor/plugins/ (first-wins).
+ * So our own plugins can override a vendored third-party plugin with
+ * the same id if needed.
+ *
+ * Result: a user can open any vault and both layout-switcher and
+ * any vendored plugin (e.g. obsidian-livesync) appear automatically —
+ * without us ever touching files inside the vault directory.
  */
 
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 
+// src/plugins/ — our own plugins, tracked in git.
 const SYSTEM_PLUGINS_DIR = path.resolve(__dirname, '..', 'plugins');
 
-// Populated by init() — set of plugin ids whose source is in SYSTEM_PLUGINS_DIR.
-const SYSTEM_PLUGIN_IDS = new Set();
+// vendor/plugins/ — downloaded third-party plugins, gitignored.
+const VENDOR_PLUGINS_DIR = path.resolve(__dirname, '..', '..', 'vendor', 'plugins');
 
-function init() {
-  SYSTEM_PLUGIN_IDS.clear();
+// Populated by init() — maps plugin id → absolute rootDir.
+// src/plugins takes precedence over vendor/plugins (first-wins).
+const SYSTEM_PLUGIN_DIRS = new Map();
 
+function _scanDir(dir) {
   let entries;
   try {
-    entries = fs.readdirSync(SYSTEM_PLUGINS_DIR, { withFileTypes: true });
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     if (err.code === 'ENOENT') {
-      console.warn('[system-plugins] no ' + SYSTEM_PLUGINS_DIR + ' directory — no system plugins loaded');
+      console.warn('[system-plugins] no ' + dir + ' directory — skipping');
       return;
     }
     throw err;
@@ -44,31 +52,53 @@ function init() {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const dirName = entry.name;
-    const manifestPath = path.join(SYSTEM_PLUGINS_DIR, dirName, 'manifest.json');
+    const manifestPath = path.join(dir, dirName, 'manifest.json');
     let manifest;
     try {
       manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     } catch (err) {
-      console.warn('[system-plugins] skipping ' + dirName + ': cannot read manifest.json (' + err.message + ')');
+      console.warn('[system-plugins] skipping ' + dirName + ' in ' + dir + ': cannot read manifest.json (' + err.message + ')');
       continue;
     }
     if (!manifest || typeof manifest.id !== 'string') {
-      console.warn('[system-plugins] skipping ' + dirName + ': manifest.json has no string id');
+      console.warn('[system-plugins] skipping ' + dirName + ' in ' + dir + ': manifest.json has no string id');
       continue;
     }
     if (manifest.id !== dirName) {
-      console.warn('[system-plugins] skipping ' + dirName + ': directory name does not match manifest id "' + manifest.id + '"');
+      console.warn('[system-plugins] skipping ' + dirName + ' in ' + dir + ': directory name does not match manifest id "' + manifest.id + '"');
       continue;
     }
-    SYSTEM_PLUGIN_IDS.add(manifest.id);
+
+    // first-wins: src/plugins (scanned first) takes precedence over vendor/plugins.
+    if (SYSTEM_PLUGIN_DIRS.has(manifest.id)) {
+      console.warn('[system-plugins] duplicate plugin id "' + manifest.id + '" in ' + dir + ' — keeping src/plugins copy');
+      continue;
+    }
+    SYSTEM_PLUGIN_DIRS.set(manifest.id, path.join(dir, dirName));
   }
+}
+
+function init() {
+  SYSTEM_PLUGIN_DIRS.clear();
+
+  // Scan src/plugins first so it wins on duplicate ids.
+  _scanDir(SYSTEM_PLUGINS_DIR);
+  // Then vendor/plugins (may not exist until install-livesync.js runs).
+  _scanDir(VENDOR_PLUGINS_DIR);
 
   const ids = getSystemPluginIds();
   console.log('[system-plugins] Loaded ' + ids.length + ' system plugins' + (ids.length ? ': ' + ids.join(', ') : ''));
 }
 
 function getSystemPluginIds() {
-  return Array.from(SYSTEM_PLUGIN_IDS).sort();
+  return Array.from(SYSTEM_PLUGIN_DIRS.keys()).sort();
+}
+
+/**
+ * Returns the absolute rootDir for a system plugin id, or null if unknown.
+ */
+function getSystemPluginDir(id) {
+  return SYSTEM_PLUGIN_DIRS.get(id) || null;
 }
 
 /**
@@ -79,14 +109,15 @@ function isSystemPluginPath(relPath) {
   if (typeof relPath !== 'string') return false;
   const m = relPath.match(/^\.obsidian\/plugins\/([^/]+)(?:\/.*)?$/);
   if (!m) return false;
-  return SYSTEM_PLUGIN_IDS.has(m[1]);
+  return SYSTEM_PLUGIN_DIRS.has(m[1]);
 }
 
 /**
- * Resolve relPath against SYSTEM_PLUGINS_DIR if it points to a real file
- * inside a known system plugin directory. Returns absolute path or null.
+ * Resolve relPath against the correct plugin directory if it points to a
+ * real file inside a known system plugin directory. Returns absolute path
+ * or null.
  *
- * Path-traversal safe: resolved path must stay inside SYSTEM_PLUGINS_DIR.
+ * Path-traversal safe: resolved path must stay inside the plugin's rootDir.
  */
 function tryGetSystemFilePath(relPath) {
   if (typeof relPath !== 'string') return null;
@@ -99,11 +130,11 @@ function tryGetSystemFilePath(relPath) {
 
   const parts = rest.split('/');
   const id = parts[0];
-  if (!SYSTEM_PLUGIN_IDS.has(id)) return null;
+  const pluginRoot = getSystemPluginDir(id);
+  if (!pluginRoot) return null;
 
-  // Resolve against the repo plugin dir. Path traversal guard:
-  // resolved path must stay inside SYSTEM_PLUGINS_DIR.
-  const pluginRoot = path.join(SYSTEM_PLUGINS_DIR, id);
+  // Resolve against the plugin root dir. Path traversal guard:
+  // resolved path must stay inside pluginRoot.
   const resolved = path.resolve(pluginRoot, '.' + path.sep + parts.slice(1).join('/'));
   const normalizedRoot = path.resolve(pluginRoot);
   if (resolved !== normalizedRoot && !resolved.startsWith(normalizedRoot + path.sep)) {
@@ -125,7 +156,7 @@ function tryGetSystemFilePath(relPath) {
 function mergeCommunityList(arr) {
   const base = Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
   const set = new Set(base);
-  for (const id of SYSTEM_PLUGIN_IDS) set.add(id);
+  for (const id of SYSTEM_PLUGIN_DIRS.keys()) set.add(id);
   return Array.from(set);
 }
 
@@ -135,12 +166,13 @@ function mergeCommunityList(arr) {
  */
 function stripCommunityList(arr) {
   if (!Array.isArray(arr)) return arr;
-  return arr.filter((x) => typeof x === 'string' && !SYSTEM_PLUGIN_IDS.has(x));
+  return arr.filter((x) => typeof x === 'string' && !SYSTEM_PLUGIN_DIRS.has(x));
 }
 
 module.exports = {
   init,
   getSystemPluginIds,
+  getSystemPluginDir,
   isSystemPluginPath,
   tryGetSystemFilePath,
   mergeCommunityList,

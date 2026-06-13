@@ -75,6 +75,25 @@
 
   // ── helpers ──────────────────────────────────────────────────────────────
 
+  // base64 string → ArrayBuffer
+  function base64ToArrayBuffer(b64) {
+    const bin = atob(b64 || '');
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr.buffer;
+  }
+
+  // ArrayBuffer → base64 (chunked — btoa blows the arg stack at ~65k)
+  function arrayBufferToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    const CHUNK = 0x8000;
+    let s = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(s);
+  }
+
   function getVaultId() {
     const params = new URLSearchParams(location.search);
     return params.get('vault') || localStorage.getItem('obsidian-web:lastVaultId') || '';
@@ -187,14 +206,7 @@
       } else {
         // Binary: return base64
         const buf = await res.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let b64 = '';
-        // btoa on large arrays
-        const CHUNK = 8192;
-        for (let i = 0; i < bytes.length; i += CHUNK) {
-          b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-        }
-        return { data: btoa(b64) };
+        return { data: arrayBufferToBase64(buf) };
       }
     },
 
@@ -208,10 +220,7 @@
         contentType = 'text/plain;charset=UTF-8';
       } else {
         // data is base64
-        const bin = atob(opts.data || '');
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        body = bytes.buffer;
+        body = base64ToArrayBuffer(opts.data);
       }
       const url = '/api/fs/write?' + vaultQuery() + 'path=' + encodePath(p) +
         (encoding ? '&encoding=' + encoding : '');

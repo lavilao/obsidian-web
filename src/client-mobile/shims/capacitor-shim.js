@@ -35,11 +35,10 @@
  *   Noop stubs (return success, do nothing — irrelevant on web):
  *     SplashScreen, StatusBar, Keyboard, KeepAwake, Haptics, RateApp
  *
- *   TODO / known limitations:
- *     App.requestUrl — currently returns {}. Needs a real fetch() impl
- *                      for LiveSync support (depends on target CORS).
- *                      See PLAN.md → "Updated approach (2026-05-11): direct
- *                      fetch + CORS".
+ *   App.requestUrl — real fetch() impl (slice livesync-requesturl).
+ *                      Supports GET/POST/PUT, headers, body (string + binary),
+ *                      always returns body as base64 (Obsidian calls atob unconditionally).
+ *                      See PLAN.md → "Updated approach (2026-05-11): direct fetch + CORS".
  *
  * Vault path: read from localStorage / URL params (same mechanism as desktop).
  * All FS calls get ?vault=<id> query param so the server routes to the right vault.
@@ -566,7 +565,29 @@
     getFonts:             () => Promise.resolve({ fonts: [] }),
     takeScreenshot:       () => Promise.resolve({ base64String: '' }),
     isInstalledFromStore: () => Promise.resolve({ isFromStore: false }),
-    requestUrl:           () => Promise.resolve({}),
+    async requestUrl(opts) {
+      const { url, method, contentType, headers, body, binary } = opts;
+      const reqHeaders = Object.assign({}, headers || {});
+      // case-insensitive check — a mixed-case user header (e.g. 'Content-type')
+      // must not be duplicated (Avigail finding).
+      const hasCT = Object.keys(reqHeaders).some(k => k.toLowerCase() === 'content-type');
+      if (contentType && !hasCT) reqHeaders['Content-Type'] = contentType;
+      let reqBody;
+      if (body == null) reqBody = undefined;
+      else if (binary) reqBody = base64ToArrayBuffer(body);  // Obsidian sent base64
+      else reqBody = body;                                    // string passthrough
+
+      const res = await fetch(url, {
+        method: method || 'GET',
+        headers: reqHeaders,
+        body: reqBody,
+        credentials: 'include',   // CouchDB cookie auth needs this (+ CORS credentials=true)
+      });
+      const respHeaders = {};
+      res.headers.forEach((v, k) => { respHeaders[k] = v; });
+      const respBuffer = await res.arrayBuffer();
+      return { status: res.status, headers: respHeaders, body: arrayBufferToBase64(respBuffer) };
+    },
     setBackgroundColor:   noop,
   };
 

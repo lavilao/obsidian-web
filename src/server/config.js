@@ -84,4 +84,20 @@ module.exports = {
   watchPollInterval: process.env.WATCH_POLL_INTERVAL
     ? parseInt(process.env.WATCH_POLL_INTERVAL, 10)
     : 3000,
+  bootstrap: {
+    // Master switch. When false, /api/bootstrap returns { disabled: true }
+    // immediately without scanning the vault. Useful for minimal deployments
+    // where the round-trip-saving isn't worth the precompute.
+    enabled: process.env.BOOTSTRAP_DISABLED !== 'true',
+
+    // Per-file size cap (KB). Files larger than this get stat-only in the
+    // response — content is fetched on demand.
+    maxFileKB: parseInt(process.env.BOOTSTRAP_MAX_FILE_KB || '500', 10),
+
+    // Total response size cap (MB) on the UNCOMPRESSED JSON. When the
+    // accumulated file content would exceed this, the server stops adding
+    // content but still returns dirs+electron. Marks response with
+    // { capped: true }.
+    maxTotalMB: parseInt(process.env.BOOTSTRAP_MAX_TOTAL_MB || '50', 10),
+  },
 };

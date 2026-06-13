@@ -1,0 +1,9 @@
+{
+  "name": "obsidian-web-client-mobile",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Mobile client helper modules (pure, browser-loaded; CommonJS-exported for tests)",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

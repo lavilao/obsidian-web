@@ -50,6 +50,29 @@
 (function () {
   'use strict';
 
+  // ── Capture native clipboard BEFORE Obsidian patches it ─────────────────
+  // The obsidian-mobile bundle monkey-patches `navigator.clipboard.writeText`
+  // and `readText` to delegate to `Capacitor.Plugins.Clipboard.{write,read}`
+  // (i.e. our shim below). If our shim then calls `navigator.clipboard.writeText`
+  // back, you get an infinite Promise recursion that OOMs the renderer
+  // (manifests as "Aw, Snap" / Error code 4 — looks like a full freeze).
+  //
+  // Bug example: clicking the file-menu → "Copy path" → "As Obsidian URL"
+  // triggers `zt(url)` in app.js → `navigator.clipboard.writeText(url)` →
+  // patched version calls `Clipboard.write({string})` → our shim calls
+  // `navigator.clipboard.writeText` → patched version → … forever.
+  //
+  // Fix: capture the native methods at IIFE init (this script loads before
+  // app.js, so navigator.clipboard.{writeText,readText} are still native).
+  const _nativeClipboardWriteText =
+    navigator.clipboard && navigator.clipboard.writeText
+      ? navigator.clipboard.writeText.bind(navigator.clipboard)
+      : null;
+  const _nativeClipboardReadText =
+    navigator.clipboard && navigator.clipboard.readText
+      ? navigator.clipboard.readText.bind(navigator.clipboard)
+      : null;
+
   // ── helpers ──────────────────────────────────────────────────────────────
 
   function getVaultId() {
@@ -105,6 +128,21 @@
     return e;
   }
 
+  // ── Bootstrap cache invalidation wrappers ────────────────────────────
+  // Each mutation method calls these so the in-memory cache populated by
+  // boot.js stays in sync with what's on disk. No-ops when the cache is
+  // empty (e.g. BOOTSTRAP_DISABLED, or before boot.js's fetch resolves).
+  function invalidateCacheEntry(p) {
+    if (window.__owCacheInvalidation && window.__owCacheInvalidation.invalidateCacheEntry) {
+      window.__owCacheInvalidation.invalidateCacheEntry(window.__owBootstrapCache, p);
+    }
+  }
+  function invalidateCacheSubtree(prefix) {
+    if (window.__owCacheInvalidation && window.__owCacheInvalidation.invalidateCacheSubtree) {
+      window.__owCacheInvalidation.invalidateCacheSubtree(window.__owBootstrapCache, prefix);
+    }
+  }
+
   // Convert our server's readdir array to Capacitor's expected format.
   function toCapacitorDirEntry(e) {
     return {
@@ -124,6 +162,18 @@
     async readFile(opts) {
       const p = fullPath(opts);
       const encoding = opts.encoding;   // 'utf8' | undefined (binary = base64)
+
+      // Bootstrap cache hit — only for text reads with content cached.
+      // Misses on binary reads, oversized/capped files, or post-write entries.
+      if (window.__owBootstrapLookup) {
+        const hit = window.__owBootstrapLookup.lookupContent(
+          window.__owBootstrapCache, p, encoding,
+        );
+        if (hit !== null && hit !== undefined) {
+          return { data: hit };
+        }
+      }
+
       const url = '/api/fs/read?' + vaultQuery() + 'path=' + encodePath(p) +
         (encoding ? '&encoding=' + encoding : '');
       const res = await fetch(url);
@@ -170,6 +220,7 @@
         const json = await res.json().catch(() => ({}));
         throw capError(json.code || 'EIO', json.error || 'writeFile failed: ' + p);
       }
+      invalidateCacheEntry(p);
       return { uri: '' };
     },
 
@@ -189,6 +240,7 @@
         const json = await res.json().catch(() => ({}));
         throw capError(json.code || 'EIO', json.error || 'appendFile failed: ' + p);
       }
+      invalidateCacheEntry(p);
       return {};
     },
 
@@ -199,6 +251,7 @@
         const json = await res.json().catch(() => ({}));
         throw capError(json.code || 'ENOENT', json.error || 'deleteFile failed: ' + p);
       }
+      invalidateCacheEntry(p);
       return {};
     },
 
@@ -213,6 +266,9 @@
         const json = await res.json().catch(() => ({}));
         throw capError(json.code || 'EIO', json.error || 'mkdir failed: ' + p);
       }
+      // A new directory invalidates the parent's listing so it shows up in
+      // subsequent readdir calls.
+      invalidateCacheEntry(p);
       return {};
     },
 
@@ -227,11 +283,24 @@
         const json = await res.json().catch(() => ({}));
         throw capError(json.code || 'ENOENT', json.error || 'rmdir failed: ' + p);
       }
+      // Recursive removal may wipe a whole subtree; non-recursive only drops
+      // an empty leaf directory.
+      if (opts.recursive) {
+        invalidateCacheSubtree(p);
+      } else {
+        invalidateCacheEntry(p);
+      }
       return {};
     },
 
     async readdir(opts) {
       const p = fullPath(opts);
+
+      if (window.__owBootstrapLookup) {
+        const hit = window.__owBootstrapLookup.lookupDir(window.__owBootstrapCache, p);
+        if (hit) return { files: hit };
+      }
+
       const res = await fetch('/api/fs/readdir?' + vaultQuery() + 'path=' + encodePath(p));
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -243,6 +312,12 @@
 
     async stat(opts) {
       const p = fullPath(opts);
+
+      if (window.__owBootstrapLookup) {
+        const hit = window.__owBootstrapLookup.lookupStat(window.__owBootstrapCache, p);
+        if (hit) return hit;
+      }
+
       const res = await fetch('/api/fs/stat?' + vaultQuery() + 'path=' + encodePath(p));
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -270,6 +345,10 @@
         const json = await res.json().catch(() => ({}));
         throw capError(json.code || 'EIO', json.error || 'rename failed');
       }
+      // The renamed entry may have been a directory — invalidate as subtree
+      // on BOTH sides for safety. Cheap (O(keys)) and idempotent.
+      invalidateCacheSubtree(from);
+      invalidateCacheSubtree(to);
       return {};
     },
 
@@ -285,6 +364,8 @@
         const json = await res.json().catch(() => ({}));
         throw capError(json.code || 'EIO', json.error || 'copy failed');
       }
+      // copy targets may be directories — drop the whole `to` subtree.
+      invalidateCacheSubtree(to);
       return {};
     },
 
@@ -322,6 +403,9 @@
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === 'change' || msg.type === 'add' || msg.type === 'unlink') {
+              // External (chokidar) write — invalidate cache so subsequent
+              // reads pick up the new content/mtime instead of stale cache.
+              invalidateCacheEntry(msg.path);
               window.__owCapacitorWatcher._listeners.forEach((cb) => {
                 cb({ path: msg.path });
               });
@@ -344,7 +428,6 @@
 
     async watchAndStatAll(opts) {
       // Custom Obsidian API: returns full file tree snapshot + activates watcher.
-      // We use our bootstrap endpoint which already has the full tree.
       //
       // IMPORTANT: the CapacitorAdapter processes the result by calling
       //   for (const i of e.children) this.quickList("", i);
@@ -353,15 +436,32 @@
       // would only populate the root level.
       //
       // Fix: return a FLAT list where every entry's `name` is its full
-      // relative path (e.g. "10. פרויקטים/myfile.md"). The adapter's
-      // quickList will then correctly add every file to its files map.
+      // relative path (e.g. "10. פרויקטים/myfile.md").
       await Filesystem.startWatch(opts);
-      const vaultId = getVaultId();
-      const res = await fetch('/api/bootstrap?vault=' + encodeURIComponent(vaultId) + '&full=1',
-        { headers: { 'Accept-Encoding': 'br, gzip' } });
-      if (!res.ok) throw capError('EIO', 'watchAndStatAll failed');
-      const data = await res.json();
-      const dirs = data.dirs || {};
+
+      // Prefer the bootstrap cache populated by boot.js — it's the same
+      // /api/bootstrap?full=1 response we'd fetch here anyway, so awaiting
+      // the in-flight promise avoids a duplicate round-trip.
+      let dirs = null;
+      if (window.__owBootstrapPromise) {
+        await window.__owBootstrapPromise.catch(() => null);
+      }
+      if (window.__owBootstrapCache && window.__owBootstrapCache.dirs) {
+        dirs = window.__owBootstrapCache.dirs;
+      }
+
+      // Fallback: bootstrap failed or is disabled — fetch directly so the
+      // adapter still gets its tree (slower path, but functional).
+      if (!dirs) {
+        const vaultId = getVaultId();
+        const res = await fetch(
+          '/api/bootstrap?vault=' + encodeURIComponent(vaultId) + '&full=1',
+          { headers: { 'Accept-Encoding': 'br, gzip' } },
+        );
+        if (!res.ok) throw capError('EIO', 'watchAndStatAll failed');
+        const data = await res.json();
+        dirs = data.dirs || {};
+      }
 
       // Flatten the entire dirs map into a single children array.
       // Each entry's name = its full relative vault path.
@@ -423,9 +523,18 @@
     getLanguageCode: () => Promise.resolve({ value: navigator.language || 'en' }),
   };
 
+  // NB: must use the *native* writeText/readText we captured at IIFE init,
+  // not `navigator.clipboard.*`, since app.js replaces those with thin wrappers
+  // that call right back into this shim (see infinite-recursion note at the top).
   const Clipboard = {
-    write: ({ string }) => navigator.clipboard.writeText(string || '').then(() => ({})),
-    read: () => navigator.clipboard.readText().then((value) => ({ type: 'text/plain', value })),
+    write: ({ string }) =>
+      _nativeClipboardWriteText
+        ? _nativeClipboardWriteText(string || '').then(() => ({}))
+        : Promise.reject(new Error('clipboard.writeText unavailable')),
+    read: () =>
+      _nativeClipboardReadText
+        ? _nativeClipboardReadText().then((value) => ({ type: 'text/plain', value }))
+        : Promise.reject(new Error('clipboard.readText unavailable')),
   };
 
   const Preferences = {

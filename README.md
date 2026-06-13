@@ -135,6 +135,24 @@ Server environment variables:
 - `VAULT_PATH`: vault path relative to the project root or absolute, default `user-data/demo-vault`.
 - `VAULT_REGISTRY`: recent-vault registry JSON path, default `user-data/registry.json`.
 
+### Bootstrap configuration
+
+The `/api/bootstrap` endpoint preloads vault content into memory for fast
+boot. Both runtimes (`/` desktop and `/mobile`) consume it. Defaults work
+for most vaults. To customize:
+
+- `BOOTSTRAP_DISABLED=true` — skip the bootstrap entirely. Each FS read
+  goes individually over HTTP. Useful for minimal deployments where the
+  precompute is not worth it. Cold boot of a large vault drops back to
+  ~20s; with bootstrap enabled it is ~2-3s.
+- `BOOTSTRAP_MAX_FILE_KB=500` — skip individual files larger than this
+  from the cache (default: 500 KB). Their stat is still cached; content
+  is fetched on demand.
+- `BOOTSTRAP_MAX_TOTAL_MB=50` — cap the total uncompressed response size
+  (default: 50 MB). When reached, server stops adding content but still
+  returns dirs+stat for the remaining files. Response carries
+  `capped: true` and `cappedReason`.
+
 ## Deployment
 
 ## Cloudflare Workers demo (`src/deployments/cloudflare/`)

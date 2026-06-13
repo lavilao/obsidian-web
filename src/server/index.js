@@ -25,7 +25,10 @@ const createProxyRouter = require('./api/proxy');
 const attachWatchServer = require('./api/watch');
 const VaultRegistry = require('./vault-registry');
 
-function createApp(appConfig = config) {
+function createApp(appConfig = {}) {
+  // Merge with the default config so partial overrides (used by tests) don't
+  // crash on missing fields like clientMobilePath. Explicit overrides still win.
+  appConfig = Object.assign({}, config, appConfig);
   const app = express();
   const vaultRegistry = new VaultRegistry(appConfig.registryPath);
 
@@ -125,7 +128,7 @@ function createApp(appConfig = config) {
   }
 
   // API routes.
-  app.use('/api/bootstrap', createBootstrapRouter(vaultRegistry, appConfig.vaultPath));
+  app.use('/api/bootstrap', createBootstrapRouter(vaultRegistry, appConfig.vaultPath, appConfig.bootstrap));
   app.use('/api/proxy-request', createProxyRouter());
   app.use('/api/vaults', createVaultsRouter(vaultRegistry));
   app.use('/api/fs', createFsRouter(vaultRegistry, appConfig.vaultPath));
@@ -156,7 +159,7 @@ function startServer(appConfig = config) {
     // Pre-build the bootstrap cache in the background so the first browser
     // request is a cache HIT instead of a cold build.
     setImmediate(() => {
-      warmUpBootstrapCache(app.locals.vaultRegistry, appConfig.vaultPath)
+      warmUpBootstrapCache(app.locals.vaultRegistry, appConfig.vaultPath, appConfig.bootstrap)
         .catch((err) => console.warn('[bootstrap] warm-up error:', err.message));
     });
   });

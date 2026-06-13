@@ -226,6 +226,38 @@ const MOBILE_SCRIPTS = [
       setStatus('Loading Obsidian mobile...');
       console.log('[obsidian-web] vault ok, injecting mobile scripts');
 
+      // ── Bootstrap fetch (parallel to script injection) ──────────────────
+      // /api/bootstrap returns the entire .obsidian/ tree + vault content
+      // + dirs in one pre-compressed response. We expose it on
+      // window.__owBootstrapCache so capacitor-shim's Filesystem.readFile/
+      // stat/readdir can answer from cache instead of round-tripping per
+      // file. watchAndStatAll awaits __owBootstrapPromise instead of
+      // re-fetching. See docs/plans/mobile-bootstrap-cache.md.
+      var bootstrapPromise = fetch(
+        '/api/bootstrap?vault=' + encodeURIComponent(VAULT_ID) + '&full=1',
+        { headers: { 'Accept-Encoding': 'br, gzip' } },
+      )
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data) return null;
+          if (data.disabled) {
+            console.log('[obsidian-web] bootstrap disabled by server, all FS reads will round-trip');
+            window.__owBootstrapCache = null;
+            return null;
+          }
+          window.__owBootstrapCache = data;
+          var fileCount = data.fs ? Object.keys(data.fs).length : 0;
+          var capped = data.capped ? ' (CAPPED: ' + data.cappedReason + ')' : '';
+          console.log('[obsidian-web] bootstrap loaded: ' + fileCount + ' files cached' + capped);
+          return data;
+        })
+        .catch(function (err) {
+          console.warn('[obsidian-web] bootstrap failed:', err && err.message || err);
+          window.__owBootstrapCache = null;
+          return null;
+        });
+      window.__owBootstrapPromise = bootstrapPromise;
+
       // הזרקה דינמית — browser מוריד במקביל, מריץ לפי סדר (async=false)
       var loaded = 0;
       for (var i = 0; i < MOBILE_SCRIPTS.length; i++) {

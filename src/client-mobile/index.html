@@ -44,6 +44,13 @@
   <script src="/client-mobile/shims/os.js?v=1"></script>
   <script src="/client-mobile/shims/btime.js?v=1"></script>
 
+  <!-- 3a. Bootstrap cache helpers — pure lookups + invalidation,
+       attached to window.__owBootstrapLookup / __owCacheInvalidation.
+       Capacitor shim's Filesystem.{readFile,stat,readdir} consult them
+       before falling back to HTTP, saving 100+ round-trips at cold boot. -->
+  <script src="/client-mobile/bootstrap-lookup.js?v=1"></script>
+  <script src="/client-mobile/cache-invalidation.js?v=1"></script>
+
   <!-- 4. Boot: vault selection, window.require, desktop cleanup.
        Obsidian's scripts (i18next, enhance, i18n, app.js) are injected
        DYNAMICALLY by boot.js after vault verification — same mechanism as

@@ -97,6 +97,31 @@ const APP_VERSION = config.appVersion;
 const VAULT_BASE = config.vaultBase;
 const READ_BATCH = 30;
 
+/**
+ * Build the electron IPC values block.
+ * Extracted so the disable path (and other callers) can produce it without
+ * doing a full vault FS walk inside _buildCacheEntry.
+ */
+function buildElectronValues(vaultId, vaultRegistry) {
+  const vault = vaultId ? vaultRegistry.get(vaultId) : null;
+  return {
+    'vault':          vault ? { id: vaultId, path: VAULT_BASE } : {},
+    'vault-list':     vaultRegistry.list(),
+    'is-dev':         false,
+    'version':        APP_VERSION,
+    'frame':          'hidden',
+    'resources':      '',
+    'file-url':       '',
+    'disable-update': true,
+    'update':         '',
+    'check-update':   false,
+    'insider-build':  false,
+    'cli':            false,
+    'disable-gpu':    false,
+    'is-quitting':    false,
+  };
+}
+
 // Text extensions — we fetch and cache the full content of these files.
 const TEXT_EXTENSIONS = new Set([
   '.md', '.json', '.txt', '.csv',
@@ -112,11 +137,23 @@ const TEXT_EXTENSIONS = new Set([
 // Files larger than this get stat-only (no content).
 // Plugin main.js files: small ones (<~500KB) load fast; large ones (>500KB)
 // are better fetched on demand rather than bloating the bootstrap payload.
-const MAX_CONTENT_BYTES = 500 * 1024; // 500 KB
+// This is module-level mutable so createBootstrapRouter / warmUpBootstrapCache
+// can adjust it per-deployment via the bootstrap config knobs.
+let currentLimits = {
+  maxContentBytes: (config.bootstrap && config.bootstrap.maxFileKB || 500) * 1024,
+  maxTotalBytes:   (config.bootstrap && config.bootstrap.maxTotalMB || 50) * 1024 * 1024,
+};
+
+function applyLimits(bootCfg) {
+  currentLimits = {
+    maxContentBytes: (bootCfg.maxFileKB || 500) * 1024,
+    maxTotalBytes:   (bootCfg.maxTotalMB || 50) * 1024 * 1024,
+  };
+}
 
 function isTextFile(filename, size) {
   if (!TEXT_EXTENSIONS.has(path.extname(filename).toLowerCase())) return false;
-  if (size !== undefined && size > MAX_CONTENT_BYTES) return false;
+  if (size !== undefined && size > currentLimits.maxContentBytes) return false;
   return true;
 }
 
@@ -130,7 +167,7 @@ function isTextFile(filename, size) {
  * Binary files are NOT put in fsCache here.  The client shim will populate
  * fsCache lazily when it serves a readdir answer from dirsCache.
  */
-async function walkDir(dir, root, fsCache, dirsCache, walkHidden = false, progress = null) {
+async function walkDir(dir, root, fsCache, dirsCache, walkHidden = false, progress = null, budget = null) {
   let entries;
   try { entries = await fsp.readdir(dir, { withFileTypes: true }); }
   catch (_) { return; }
@@ -184,11 +221,19 @@ async function walkDir(dir, root, fsCache, dirsCache, walkHidden = false, progre
     if (e.isDirectory) {
       // Put directory stat in fs cache so stat(dir) works.
       fsCache[rel] = { mtime: e.mtime, size: e.size, isFile: false, isDirectory: true };
-      await walkDir(abs, root, fsCache, dirsCache, walkHidden, progress);
+      await walkDir(abs, root, fsCache, dirsCache, walkHidden, progress, budget);
     } else if (isTextFile(e.name, e.size)) {
-      // Text file within size limit: stat now, content added after batch read.
-      fsCache[rel] = { mtime: e.mtime, size: e.size, isFile: true };
-      textFiles.push({ abs, rel });
+      // Text file within per-file size limit. Check the global total budget:
+      // if there's no room left, mark capped and SKIP this file entirely
+      // (don't add to fsCache so client falls through to HTTP — per plan
+      // pitfall #7 option 2). dirs cache still has its stat.
+      if (budget && budget.remaining < e.size) {
+        budget.capped = true;
+      } else {
+        if (budget) budget.remaining -= e.size;
+        fsCache[rel] = { mtime: e.mtime, size: e.size, isFile: true };
+        textFiles.push({ abs, rel });
+      }
     }
     // Binary files or oversized text files: NOT added to fsCache here.
     // They'll be added lazily by the client when readdir is served.
@@ -240,25 +285,9 @@ async function buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false) 
 
 async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false) {
   const t0 = Date.now();
-  const vault = vaultId ? vaultRegistry.get(vaultId) : null;
 
   // ── Electron IPC values ────────────────────────────────────────────
-  const electronValues = {
-    'vault':          vault ? { id: vaultId, path: VAULT_BASE } : {},
-    'vault-list':     vaultRegistry.list(),
-    'is-dev':         false,
-    'version':        APP_VERSION,
-    'frame':          'hidden',
-    'resources':      '',
-    'file-url':       '',
-    'disable-update': true,
-    'update':         '',
-    'check-update':   false,
-    'insider-build':  false,
-    'cli':            false,
-    'disable-gpu':    false,
-    'is-quitting':    false,
-  };
+  const electronValues = buildElectronValues(vaultId, vaultRegistry);
 
   // ── Cache validation ───────────────────────────────────────────────
   const cached = serverCache.get(vaultId);
@@ -308,9 +337,17 @@ async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false)
   const fsCache = {};
   const dirsCache = {};
 
+  // Shared budget for the entire build. Threaded into all walkDir calls
+  // (top-level + recursive). Only enforced on full builds (the partial
+  // .obsidian-only build is small and capped by the per-file limit).
+  const budget = full ? {
+    remaining: currentLimits.maxTotalBytes,
+    capped: false,
+  } : null;
+
   // Always: walk .obsidian/ fully (plugins, themes, snippets…).
   const obsidianDir = path.join(vaultRoot, '.obsidian');
-  try { await walkDir(obsidianDir, vaultRoot, fsCache, dirsCache, true, progress); } catch (_) {}
+  try { await walkDir(obsidianDir, vaultRoot, fsCache, dirsCache, true, progress, budget); } catch (_) {}
 
   // Vault root listing.
   try {
@@ -351,7 +388,7 @@ async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false)
   // that's fine; we avoid duplicating the walk logic.
   if (full) {
     setProgress(vaultId, { state: 'scanning', label: 'Scanning vault (full)...' });
-    await walkDir(vaultRoot, vaultRoot, fsCache, dirsCache, false, progress);
+    await walkDir(vaultRoot, vaultRoot, fsCache, dirsCache, false, progress, budget);
   }
 
   setProgress(vaultId, { state: 'reading', label: 'Reading files...', pct: 80 });
@@ -363,6 +400,11 @@ async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false)
     .reduce((s, v) => s + v.size, 0);
 
   const response = { electron: electronValues, fs: fsCache, dirs: dirsCache };
+  if (budget && budget.capped) {
+    response.capped = true;
+    response.cappedReason =
+      `total size limit reached (${currentLimits.maxTotalBytes / (1024 * 1024)} MB)`;
+  }
 
   // Snapshot directory mtimes for future invalidation checks.
   const dirMtimes = {};
@@ -405,7 +447,25 @@ async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false)
 
 // ── router ────────────────────────────────────────────────────────────────────
 
-function createBootstrapRouter(vaultRegistry, fallbackVaultRoot) {
+function createBootstrapRouter(vaultRegistry, fallbackVaultRoot, bootstrapConfig) {
+  // Default to the global config's bootstrap block when not provided
+  // (production startServer path). Tests pass an explicit override.
+  const bootCfg = bootstrapConfig || config.bootstrap;
+
+  if (!bootCfg.enabled) {
+    // Clear any stale entries from a previous (non-disabled) session so
+    // they can't leak into the disabled responses.
+    console.log('[bootstrap] DISABLED via BOOTSTRAP_DISABLED env or override');
+    serverCache.clear();
+    buildProgress.clear();
+    pendingBuilds.clear();
+  }
+
+  // Apply per-router limits. Note this affects module-level state — the
+  // last router constructed wins. Tests run sequentially so this is fine;
+  // in production there's a single createApp() call.
+  applyLimits(bootCfg);
+
   const router = express.Router();
 
   // Lightweight status endpoint for progress polling.
@@ -421,6 +481,18 @@ function createBootstrapRouter(vaultRegistry, fallbackVaultRoot) {
   router.get('/', async (req, res) => {
     const vaultId = req.query.vault || '';
     const full = req.query.full === '1';
+
+    // ── Disable path ────────────────────────────────────────────────────
+    // When bootstrap is disabled by env/config, return a minimal payload
+    // immediately. No FS walk, no serverCache lookup, no pre-compression.
+    if (!bootCfg.enabled) {
+      return res.json({
+        disabled: true,
+        electron: buildElectronValues(vaultId, vaultRegistry),
+        fs: {},
+        dirs: {},
+      });
+    }
 
     const vault = vaultId ? vaultRegistry.get(vaultId) : null;
     const vaultRoot = vault ? vault.path : fallbackVaultRoot;
@@ -468,8 +540,20 @@ function createBootstrapRouter(vaultRegistry, fallbackVaultRoot) {
 /**
  * Warm up the bootstrap cache for all registered vaults in the background.
  * Called at server start so the first real user request is a cache HIT.
+ *
+ * If bootstrap is disabled (config.bootstrap.enabled === false), this is a
+ * no-op — we avoid the precompute entirely.
  */
-async function warmUpBootstrapCache(vaultRegistry, fallbackVaultRoot) {
+async function warmUpBootstrapCache(vaultRegistry, fallbackVaultRoot, bootstrapConfig) {
+  const bootCfg = bootstrapConfig || config.bootstrap;
+  if (!bootCfg.enabled) {
+    // Bootstrap disabled — skip the precompute entirely.
+    return;
+  }
+  // Make sure per-build limits reflect this config (independent of whether
+  // a router was constructed in this process).
+  applyLimits(bootCfg);
+
   const vaults = vaultRegistry.list();
   const ids = Object.keys(vaults);
   if (ids.length === 0 && fallbackVaultRoot) {

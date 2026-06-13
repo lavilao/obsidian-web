@@ -581,7 +581,9 @@
         method: method || 'GET',
         headers: reqHeaders,
         body: reqBody,
-        credentials: 'include',   // CouchDB cookie auth needs this (+ CORS credentials=true)
+        credentials: 'omit',   // ‏native requestUrl ‏לא ‏שולח cookies; ‏auth ‏עובר ‏ב-Authorization header.
+                             // ‏`include` ‏שובר ‏endpoints ‏עם wildcard CORS (GitHub) — ‏אומת ‏ש-LiveSync→CouchDB
+                             // ‏משתמש ‏ב-basic-auth (‏לא cookies), ‏אז omit ‏בטוח. ‏ראה §6.
       });
       const respHeaders = {};
       res.headers.forEach((v, k) => { respHeaders[k] = v; });

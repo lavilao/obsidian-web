@@ -5,8 +5,12 @@ vendor/
 node_modules/
 npm-debug.log*
 
-# Internal development docs (contain personal infra references)
-docs/
+# Private docs — NEVER published. Anything dropped here is auto-ignored
+# (directory-level boundary, so a private doc can't be committed by mistake).
+docs-private/
+
+# Session transcripts (raw, contain personal context) — never published.
+.specstory/
 
 # Tool-managed worktree state
 .codenomad/

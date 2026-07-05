@@ -1,4 +1,10 @@
-const path = require('path');
+import path from 'path';
+import { fileURLToPath } from 'url';
+import crypto from 'crypto';
+import { readdirSync as fsSync } from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Repo root — two levels up from src/server/.
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -11,11 +17,8 @@ const APP_VERSION = '1.12.7';
 // Must match the value the client shims use (src/client/boot.js VAULT_BASE).
 const VAULT_BASE = '/vault';
 
-const crypto = require('crypto');
-const fsSync = require('fs');
-
 function parsePort(raw) {
-  if (!raw) return 3000;
+  if (!raw) return 2999;
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 1 || n > 65535) {
     throw new Error(`Invalid PORT value: "${raw}". Must be an integer between 1 and 65535.`);
@@ -61,9 +64,9 @@ const CLIENT_MOBILE_PATH = path.resolve(PROJECT_ROOT, 'src', 'client-mobile');
 const OBSIDIAN_PATH = path.resolve(PROJECT_ROOT, 'vendor', 'obsidian');
 const OBSIDIAN_MOBILE_PATH = path.resolve(PROJECT_ROOT, 'vendor', 'obsidian-mobile');
 
-module.exports = {
+export default {
   port: parsePort(process.env.PORT),
-  host: process.env.HOST || '127.0.0.1',
+  host: process.env.HOST || '0.0.0.0',
   vaultPath: path.resolve(PROJECT_ROOT, process.env.VAULT_PATH || 'user-data/demo-vault'),
   registryPath: path.resolve(PROJECT_ROOT, process.env.VAULT_REGISTRY || 'user-data/registry.json'),
   obsidianPath: OBSIDIAN_PATH,

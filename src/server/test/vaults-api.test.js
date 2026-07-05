@@ -1,12 +1,12 @@
-const assert = require('assert/strict');
-const fs = require('fs');
+import assert from 'assert/strict';
+import fs from 'fs';
 const fsp = fs.promises;
-const http = require('http');
-const os = require('os');
-const path = require('path');
-const test = require('node:test');
+import http from 'http';
+import os from 'os';
+import path from 'path';
+import { test } from 'node:test';
 
-const { createApp } = require('../index');
+import { createApp } from '../index.js';
 
 async function startTestServer(config) {
   const app = createApp(config);
@@ -160,7 +160,7 @@ test('fs requests are scoped to the selected vault id', async (t) => {
   assert.equal(writeResponse.status, 200);
 
   await assert.rejects(fsp.stat(path.join(vaultA, 'note.md')), { code: 'ENOENT' });
-  assert.equal(await fsp.readFile(path.join(vaultB, 'note.md'), 'utf8'), 'written in b');
+  assert.equal(await fsp.readFile(path.join(vaultB, 'note.md'), { encoding: 'utf8' }), 'written in b');
 
   const readAResponse = await fetch(
     server.baseUrl + `/api/fs/read?vault=${openedA.id}&path=${encodeURIComponent('note.md')}&encoding=utf8`,

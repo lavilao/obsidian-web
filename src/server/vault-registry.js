@@ -1,8 +1,8 @@
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+import crypto from 'crypto';
+import { readFileSync, mkdirSync, writeFileSync, renameSync, accessSync, statSync, constants } from 'fs';
+import path from 'path';
 
-class VaultRegistry {
+export default class VaultRegistry {
   constructor(registryPath) {
     this.registryPath = registryPath;
     this.vaults = this.load();
@@ -10,7 +10,7 @@ class VaultRegistry {
 
   load() {
     try {
-      return JSON.parse(fs.readFileSync(this.registryPath, 'utf8')) || {};
+      return JSON.parse(readFileSync(this.registryPath, 'utf8')) || {};
     } catch (err) {
       if (err.code === 'ENOENT') return {};
       // Corrupt or unreadable file — start empty and log, don't crash the server.
@@ -21,12 +21,10 @@ class VaultRegistry {
 
   save() {
     const dir = path.dirname(this.registryPath);
-    fs.mkdirSync(dir, { recursive: true });
-    // Atomic write: write to a temp file then rename over the final path so a
-    // crash mid-write doesn't leave a partial/invalid JSON file.
+    mkdirSync(dir, { recursive: true });
     const tmp = this.registryPath + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(this.vaults, null, 2));
-    fs.renameSync(tmp, this.registryPath);
+    writeFileSync(tmp, JSON.stringify(this.vaults, null, 2));
+    renameSync(tmp, this.registryPath);
   }
 
   list() {
@@ -52,12 +50,12 @@ class VaultRegistry {
 
     const resolved = path.resolve(vaultPath);
     if (create) {
-      fs.mkdirSync(resolved, { recursive: true });
+      mkdirSync(resolved, { recursive: true });
     }
 
     let stats;
     try {
-      stats = fs.statSync(resolved);
+      stats = statSync(resolved);
     } catch (err) {
       return { ok: false, error: 'folder not found' };
     }
@@ -67,7 +65,7 @@ class VaultRegistry {
     }
 
     try {
-      fs.accessSync(resolved, fs.constants.R_OK | fs.constants.W_OK);
+      accessSync(resolved, constants.R_OK | constants.W_OK);
     } catch (err) {
       return { ok: false, error: 'no permission to access folder' };
     }
@@ -98,7 +96,7 @@ class VaultRegistry {
 
     const resolvedNewPath = path.resolve(newPath);
     try {
-      fs.renameSync(this.vaults[id].path, resolvedNewPath);
+      renameSync(this.vaults[id].path, resolvedNewPath);
     } catch (err) {
       return { ok: false, error: err.message, code: err.code };
     }
@@ -112,5 +110,3 @@ class VaultRegistry {
     return { ok: true };
   }
 }
-
-module.exports = VaultRegistry;

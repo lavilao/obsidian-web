@@ -15,12 +15,12 @@
  * or polling timers).
  */
 
-const chokidar = require('chokidar');
-const path = require('path');
-const { WebSocketServer } = require('ws');
-const config = require('../config');
+import chokidar from 'chokidar';
+import path from 'path';
+import { WebSocketServer } from 'ws';
+import config from '../config.js';
 
-function attachWatchServer(httpServer, vaultRegistry, fallbackVaultRoot) {
+export default function attachWatchServer(httpServer, vaultRegistry, fallbackVaultRoot) {
   const wss = new WebSocketServer({ server: httpServer, path: '/api/watch' });
 
   // Shared watchers: vaultRoot → { watcher, clients: Set<ws> }
@@ -125,4 +125,4 @@ function attachWatchServer(httpServer, vaultRegistry, fallbackVaultRoot) {
   return { wss, sharedWatchers };
 }
 
-module.exports = attachWatchServer;
+

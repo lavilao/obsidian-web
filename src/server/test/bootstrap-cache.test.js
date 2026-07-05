@@ -8,18 +8,17 @@
  *  3. Writing a file invalidates the cache so the next request is a MISS.
  */
 
-'use strict';
-
-const assert = require('assert/strict');
-const fs = require('fs');
+import assert from 'assert/strict';
+import fs from 'fs';
 const fsp = fs.promises;
-const http = require('http');
-const os = require('os');
-const path = require('path');
-const test = require('node:test');
+import http from 'http';
+import os from 'os';
+import path from 'path';
+import { test } from 'node:test';
 
-const { createApp } = require('../index');
-const { serverCache } = require('../api/bootstrap');
+import { createApp } from '../index.js';
+import zlib from 'zlib';
+import { serverCache } from '../api/bootstrap.js';
 
 async function startTestServer(config) {
   const app = createApp(config);
@@ -108,7 +107,6 @@ test('bootstrap cache HIT sends pre-compressed Content-Encoding header', async (
   );
 
   // Decompress and verify the response body is valid JSON with the right shape.
-  const zlib = require('zlib');
   const decompress = ce === 'br'
     ? (buf) => new Promise((res, rej) => zlib.brotliDecompress(buf, (e, d) => e ? rej(e) : res(d)))
     : (buf) => new Promise((res, rej) => zlib.gunzip(buf, (e, d) => e ? rej(e) : res(d)));
@@ -276,19 +274,19 @@ test('warm-up bails out without scanning when bootstrap is disabled', async (t) 
   }));
 
   // Pre-clear serverCache (other tests may have populated it).
-  const { serverCache, warmUpBootstrapCache } = require('../api/bootstrap');
-  const VaultRegistry = require('../vault-registry');
-  serverCache.clear();
+  const { serverCache: sc, warmUpBootstrapCache } = await import('../api/bootstrap.js');
+  const { default: VaultRegistry } = await import('../vault-registry.js');
+  sc.clear();
 
   const registry = new VaultRegistry(registryPath);
 
   // Sanity: warm-up with enabled=false should NOT populate serverCache.
   await warmUpBootstrapCache(registry, vaultPath, { enabled: false, maxFileKB: 500, maxTotalMB: 50 });
-  assert.equal(serverCache.size, 0, 'serverCache must stay empty when disabled');
+  assert.equal(sc.size, 0, 'serverCache must stay empty when disabled');
 
   // Control: warm-up with enabled=true on the same vault DOES populate it.
   await warmUpBootstrapCache(registry, vaultPath, { enabled: true, maxFileKB: 500, maxTotalMB: 50 });
-  assert.ok(serverCache.size > 0, 'serverCache should be populated when enabled');
+  assert.ok(sc.size > 0, 'serverCache should be populated when enabled');
 });
 
 test('buildElectronValues extracted helper produces same shape as enabled bootstrap', async (t) => {

@@ -7,23 +7,23 @@
  * All paths are relative to the configured vault root for safety.
  */
 
-const express = require('express');
-const fs = require('fs');
+import express from 'express';
+import fs from 'fs';
 const fsp = fs.promises;
-const path = require('path');
+import path from 'path';
 
-const {
+import {
   tryGetSystemFilePath,
   getSystemPluginIds,
   getSystemPluginDir,
   mergeCommunityList,
   stripCommunityList,
-} = require('../system-plugins');
+} from '../system-plugins.js';
 
-// Imported lazily to avoid circular require — bootstrap.js exports serverCache.
-function invalidateBootstrapCache(vaultId) {
+// Imported lazily to avoid circular dependency — bootstrap.js exports serverCache.
+async function invalidateBootstrapCache(vaultId) {
   try {
-    const { serverCache } = require('./bootstrap');
+    const { serverCache } = await import('./bootstrap.js');
     if (serverCache) serverCache.delete(vaultId);
   } catch (_) {}
 }
@@ -398,14 +398,26 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
     }
   });
 
+  // Read raw body from the request stream (Bun's express.raw() is broken).
+  function readBody(req) {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => resolve(Buffer.concat(chunks)));
+      req.on('error', reject);
+    });
+  }
+
   // Write a file. Body is the raw content (text or binary).
   // ?encoding=utf8 means the server treats body as utf-8 text.
-  router.put('/write', express.raw({ type: '*/*', limit: '256mb' }), async (req, res) => {
+  router.put('/write', async (req, res) => {
     try {
       const relPath = req.query.path || '';
       const target = resolveSafe(req, relPath);
       const encoding = req.query.encoding || null;
-      let data = encoding ? req.body.toString(encoding) : req.body;
+
+      const raw = await readBody(req);
+      let data = encoding ? raw.toString(encoding) : raw;
 
       // For community-plugins.json: strip our system plugin ids before
       // writing so we don't pollute the user's vault. Malformed JSON is
@@ -506,4 +518,4 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
   return router;
 }
 
-module.exports = createFsRouter;
+export default createFsRouter;

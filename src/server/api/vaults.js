@@ -1,6 +1,6 @@
-const express = require('express');
+import express from 'express';
 
-function createVaultsRouter(vaultRegistry) {
+export default function createVaultsRouter(vaultRegistry) {
   const router = express.Router();
 
   router.get('/list', (req, res) => {
@@ -46,5 +46,3 @@ function createVaultsRouter(vaultRegistry) {
 
   return router;
 }
-
-module.exports = createVaultsRouter;

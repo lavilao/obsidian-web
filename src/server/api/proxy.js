@@ -12,12 +12,10 @@
  * Response: { status, headers, body (base64 when binary) }
  */
 
-'use strict';
-
-const express = require('express');
-const https = require('https');
-const http = require('http');
-const { URL } = require('url');
+import express from 'express';
+import https from 'https';
+import http from 'http';
+import { URL } from 'url';
 
 // Simple allow-list of hostnames we are willing to proxy.
 // Keeps this from becoming an open proxy.
@@ -81,7 +79,7 @@ function fetchUrl(urlStr, method, reqHeaders, body) {
   });
 }
 
-function createProxyRouter() {
+export default function createProxyRouter() {
   const router = express.Router();
 
   router.post('/', express.json({ limit: '4mb' }), async (req, res) => {
@@ -119,5 +117,3 @@ function createProxyRouter() {
 
   return router;
 }
-
-module.exports = createProxyRouter;

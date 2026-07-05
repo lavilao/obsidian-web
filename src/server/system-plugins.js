@@ -23,9 +23,12 @@
  * without us ever touching files inside the vault directory.
  */
 
-const fs = require('fs');
-const fsp = fs.promises;
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // src/plugins/ — our own plugins, tracked in git.
 const SYSTEM_PLUGINS_DIR = path.resolve(__dirname, '..', 'plugins');
@@ -169,7 +172,28 @@ function stripCommunityList(arr) {
   return arr.filter((x) => typeof x === 'string' && !SYSTEM_PLUGIN_DIRS.has(x));
 }
 
-module.exports = {
+/**
+ * Test helper: initialize with custom plugin directories instead of
+ * the built-in paths. Clears any previously loaded plugins and scans
+ * the given dirs.
+ */
+function _initFromDirs(srcDir, vendorDir) {
+  SYSTEM_PLUGIN_DIRS.clear();
+  _scanDir(srcDir);
+  _scanDir(vendorDir);
+}
+
+export default {
+  init,
+  getSystemPluginIds,
+  getSystemPluginDir,
+  isSystemPluginPath,
+  tryGetSystemFilePath,
+  mergeCommunityList,
+  stripCommunityList,
+  _initFromDirs,
+};
+export {
   init,
   getSystemPluginIds,
   getSystemPluginDir,
@@ -178,4 +202,5 @@ module.exports = {
   mergeCommunityList,
   stripCommunityList,
   SYSTEM_PLUGINS_DIR,
+  _initFromDirs,
 };

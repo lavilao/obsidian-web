@@ -4,20 +4,19 @@
  * calls. See the analysis in the project README.
  */
 
-const express = require('express');
-const fs = require('fs');
-const fsp = fs.promises;
-const os = require('os');
-const path = require('path');
-const config = require('../config');
+import express from 'express';
+import { promises as fsp } from 'fs';
+import os from 'os';
+import path from 'path';
+import config from '../config.js';
 
-// Imported lazily to avoid circular require — same pattern as api/fs.js.
-function invalidateBootstrapCache(vaultId) {
-  try {
-    const { serverCache } = require('./bootstrap');
-    if (serverCache && vaultId) serverCache.delete(vaultId);
-  } catch (_) {}
-}
+let invalidateBootstrapCache = () => {};
+try {
+  const bootstrap = await import('./bootstrap.js');
+  invalidateBootstrapCache = (vaultId) => {
+    if (bootstrap.serverCache && vaultId) bootstrap.serverCache.delete(vaultId);
+  };
+} catch (_) {}
 
 const APP_VERSION = config.appVersion;
 const VAULT_BASE = config.vaultBase; // virtual path the renderer sees
@@ -159,4 +158,4 @@ function createElectronRouter(vaultRegistry, fallbackVaultRoot) {
   return router;
 }
 
-module.exports = createElectronRouter;
+export default createElectronRouter;

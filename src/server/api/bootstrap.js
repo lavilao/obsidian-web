@@ -33,12 +33,11 @@
  * subsequent stat(path) calls are answered from cache.
  */
 
-const express = require('express');
-const fs = require('fs');
-const fsp = fs.promises;
-const path = require('path');
-const zlib = require('zlib');
-const config = require('../config');
+import express from 'express';
+import { promises as fsp } from 'fs';
+import path from 'path';
+import zlib from 'zlib';
+import config from '../config.js';
 
 // ── Server-side bootstrap cache ───────────────────────────────────────────────
 //
@@ -447,7 +446,7 @@ async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false)
 
 // ── router ────────────────────────────────────────────────────────────────────
 
-function createBootstrapRouter(vaultRegistry, fallbackVaultRoot, bootstrapConfig) {
+export default function createBootstrapRouter(vaultRegistry, fallbackVaultRoot, bootstrapConfig) {
   // Default to the global config's bootstrap block when not provided
   // (production startServer path). Tests pass an explicit override.
   const bootCfg = bootstrapConfig || config.bootstrap;
@@ -544,7 +543,7 @@ function createBootstrapRouter(vaultRegistry, fallbackVaultRoot, bootstrapConfig
  * If bootstrap is disabled (config.bootstrap.enabled === false), this is a
  * no-op — we avoid the precompute entirely.
  */
-async function warmUpBootstrapCache(vaultRegistry, fallbackVaultRoot, bootstrapConfig) {
+export async function warmUpBootstrapCache(vaultRegistry, fallbackVaultRoot, bootstrapConfig) {
   const bootCfg = bootstrapConfig || config.bootstrap;
   if (!bootCfg.enabled) {
     // Bootstrap disabled — skip the precompute entirely.
@@ -579,7 +578,4 @@ async function warmUpBootstrapCache(vaultRegistry, fallbackVaultRoot, bootstrapC
   }
 }
 
-module.exports = createBootstrapRouter;
-module.exports.serverCache = serverCache;
-module.exports.pendingBuilds = pendingBuilds;
-module.exports.warmUpBootstrapCache = warmUpBootstrapCache;
+export { serverCache, pendingBuilds };
